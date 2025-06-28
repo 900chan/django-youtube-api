@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-20.04 # 작업 환경
     steps: #작업 단계
       - name: Login in to Docker Hub
-        users: docker/login-action@v1
+        uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
