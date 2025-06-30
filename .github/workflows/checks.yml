@@ -23,5 +23,5 @@ jobs:
         # docker-compose 명령어가 구버전이라 '-'제거 후 실행
         run: docker compose run --rm app sh -c 'python manage.py wait_for_db && python manage.py test'
 
-#      - name: Run Flake8 for Lint Check # pep8 style guide를 잘 준수하고 있는지 체크
-#        run: docker compose run --rm app sh -c 'flake8'
+      - name: Run Flake8 for Lint Check # pep8 style guide를 잘 준수하고 있는지 체크
+        run: docker compose run --rm app sh -c 'flake8'
