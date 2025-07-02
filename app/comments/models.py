@@ -10,4 +10,4 @@ class Comment(CommonModel):
 
     # # 대댓글
     # parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True)
-    #
+

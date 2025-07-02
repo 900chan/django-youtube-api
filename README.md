@@ -421,7 +421,7 @@ RUN python -m venv /py && \
 ... 
 ```
 
-6. requirements.txt 업데이트
+6. __requirements.txt 업데이트__
 
 ```
 django>=5.0.1,<6.0.0 # Django Framework
@@ -430,3 +430,425 @@ djangorestframework>=3.14.0,<4.0.0 # DRF (Django Rest Framework)
 ```
 > 새로 추가한 내용을 기반으로 다시 한번 빌드해주기
 > > docker-compose build
+---
+# 📄   Day_3: PROJECT settings - 03
+
+---
+1. __Django 변수 setting__
+
+```
+import os 
+
+# Database
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'HOST': os.environ.get('DB_HOST'),
+        'NAME': os.environ.get('DB_NAME'),
+        'USER': os.environ.get('DB_USER'),
+        'PASSWORD': os.environ.get('DB_PASS'),
+    }
+}
+
+```
+2. __Django custom 명령어 생성__
+
+(1) Creating app core
+> docker-compose run --rm app sh -c "python manage.py startapp core"
+
+(2) settings에 core 추가
+```
+# app/settings.py
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'core' <- core 알려주기
+]
+```
+
+(3) 사용자 정의 Django 명령어 추가
+
+```
+# core/management/commands/wait_for_db.py
+
+# wait_for_db
+# -> Django가 DB가 준비될 때까지 연결을 재시도하게 해주기 위해 필요
+# -> 하나의 도커 이미지에 각 컨테이너(app,db)가 존재하기 때문
+import time
+
+from django.core.management.base import BaseCommand
+from django.db import connections
+from django.db.utils import OperationalError
+from psycopg2 import OperationalError as Psycopg2OperationalError
+
+class Command(BaseCommand):
+    def handle(self, *args, **options):
+         self.stdout.write("Wating for DB connection ...")
+
+         is_db_connected = None
+
+         while not is_db_connected:
+            try:
+                is_db_connected  = connections['default']
+
+            except(OperationalError, Psycopg2OperationalError):
+               self.stdout.write("Retry DB connection ...")
+               time.sleep(1)
+
+         self.stdout.write(self.style.SUCCESS('Success to PostgreSQL connection!'))
+```
+(4) docker-compose.yml에 postgres 추가
+```
+ # docker-compose.yml
+ 
+ db:
+    image: postgres:16
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=youtube
+      - POSTGRES_USER=seopftware
+      - POSTGRES_PASSWORD=password123
+```
+(5) docker 설정 후 build & up
+> * docker-compose run --rm app sh -c 'python manage.py makemigrations'
+> * docker-compose up --build
+
+3. __DB Test Code 작성 및 실행__
+
+* Test Code 작성
+```
+# core/test.py
+
+from django.test import SimpleTestCase
+from unittest.mock import patch
+from django.core.management import call_command
+from psycopg2 import OperationalError as Psycopg2OPsycopgError
+from django.db.utils import OperationalError
+
+@patch('django.db.utils.ConnectionHandler.__getitem__')
+class CommandsTests(SimpleTestCase):
+    #wait_for_db 명령어가 DB가 준비되었을 떄 잘 동작하는지 체크하는 함수
+    def test_wait_for_db_ready(self, patched_getitem):
+        patched_getitem.return_value = True
+        call_command('wait_for_db')
+        self.assertEqual(patched_getitem.call_count, 1)
+
+
+
+    @patch('time.sleep')
+    def test_wait_for_db_delay(self, patched_sleep, patched_getitem):
+        patched_getitem.side_effect = [Psycopg2OPsycopgError] + \
+            [OperationalError] * 5 + [True]
+        call_command('wait_for_db')
+
+        self.assertEqual(patched_getitem.call_count, 7)
+```
+> Test Code 실행
+> > docker-compose run --rm app sh -c 'python manage.py test core'
+
+4. __Github Actions 업데이트__
+```
+    name : Test
+    run: docker compose run --rm app sh -c 'python manage.py wait_for_db && python manage.py test'
+```
+
+5. __Youtube Models 폴더 생성__
+
+```
+# users, videos, reactions, comments, subscriptions, common
+- docker-compose run --rm app sh -c 'python manage.py startapp users'
+- docker-compose run --rm app sh -c 'python manage.py startapp videos'
+- docker-compose run --rm app sh -c 'python manage.py startapp reactions'
+- docker-compose run --rm app sh -c 'python manage.py startapp comments'
+- docker-compose run --rm app sh -c 'python manage.py startapp subscriptions'
+- docker-compose run --rm app sh -c 'python manage.py startapp common'
+```
+---
+# 📑  Day_4: PROJECT settings - Models
+
+---
+
+1. __Custom UserModel 생성__
+
+(1) users앱 생성
+>  docker-compose run --rm app sh -c "django-admin startapp users"
+
+(2) settings 업데이트
+```
+# app/settings.py
+
+AUTH_USER_MODEL = 'users.User' # 기본 모델을 users앱의 user로 지정
+
+DJANGO_SYSTEM_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'core',
+]
+ 
+CUSTOM_USER_APPS = [
+    'users.apps.UsersConfig'
+]
+
+INSTALLED_APPS = CUSTOM_USER_APPS + DJANGO_SYSTEM_APPS
+```
+
+(3) User Model 정의
+```
+# users/models.py
+
+from django.db import models
+from django.contrib.auth.models import (
+        AbstractBaseUser,
+        PermissionsMixin
+    )
+    
+class User(AbstractBaseUser, PermissionsMixin):
+    email = models.CharField(max_length=255, unique=True)
+    nickname = models.CharField(max_length=30)
+    is_business = models.BooleanField(default=False)
+
+    # PermissionsMixin : 유저의 권한 관리
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+
+    USERNAME_FIELD = 'email'
+
+    objects = UserManager() # 유저를 생성 및 관리
+ 
+    def __str__(self):
+        return f'email : {self.email}, nickname : {self.nickname}'
+```
+
+(4) Test Code 작성
+```
+# users/test.py
+
+from django.test import TestCase
+from django.contrib.auth import get_user_model
+
+# TDD : Test Driven Development (테스트 주도 개발)
+
+class UserTestCase(TestCase):
+
+    # 일반 유저 생성 테스트 함수
+    def test_create_user(self):
+        email = 'absbrb@naver.com'
+        password = 'password123'
+
+        user = get_user_model().objects.create_user(email=email, password=password)
+        # 유저가 정상적으로 만들어졌는지 체크
+        self.assertEqual(user.email, email)
+        self.assertTrue(user.check_password(password))
+        self.assertFalse(user.is_superuser)
+
+
+    # 슈퍼 유저 생성 테스트 함수
+    def test_create_superuser(self):
+        email = 'absbrb_super@naver.com'
+        password = 'password123'
+
+        user = get_user_model().objects.create_superuser(
+            email=email,
+            password=password
+        )
+
+        # 슈퍼유저
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_superuser)
+```
+
+(5) User Model에 일반 유저, 슈퍼 유저 추가
+```
+# users/models.py
+
+from django.db import models
+from django.contrib.auth.models import (
+        BaseUserManager
+    )
+
+class UserManager(BaseUserManager):
+    # 일반 유저 생성 함수
+    def create_user(self, email, password):
+        if not email:
+            raise ValueError('Please enter an email address')
+
+        user = self.model(email=email)
+        user.set_password(password)
+        user.save()
+        return user
+
+    # 슈퍼 유저 생성 함수
+    def create_superuser(self, email, password):
+        user = self.create_user(email, password)
+
+        user.is_superuser = True
+        user.is_staff = True
+        user.save()
+
+        return user
+```
+(6) DB migration 진행
+> docker-compose run --rm app sh -c 'python manage.py makemigrations'
+
+(7) 관리자 계정 생성
+> docker-compose run -—rm app sh -c 'python manage.py createsuperuser'
+> > #email, password 입력 후 생성
+
+
+2. __ Models 정의__
+
+(1) common/models.py
+```
+from django.db import models
+
+# - created_at: 데이터 생성시간
+# - updated_at: 데이터 업데이트 시간
+class CommonModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+```
+
+(2) videos/models.py
+```
+from django.db import models
+from common.models import CommonModel
+from users.models import User
+
+
+class Video(CommonModel):
+    title = models.CharField(max_length=30)
+    description = models.TextField(blank=True)
+    link = models.URLField()
+    category = models.CharField(max_length=20)
+    views_count = models.PositiveIntegerField(default=0)
+    thumbnail = models.URLField(blank=True) # S3 Bucket -> Save File -> URL -> Save URL
+    video_file = models.FileField(upload_to='storage/') # upload_to='저장경로'
+
+    # User : Video -> 1:N
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+```
+
+(3) reactions/models.py
+```
+from django.db import models
+from common.models import CommonModel
+
+class Reaction(CommonModel):
+    user = models.ForeignKey('users.User', on_delete=models.CASCADE)
+    video = models.ForeignKey('videos.Video', on_delete=models.CASCADE)
+
+    LIKE = 1
+    DISLIKE = -1
+    NO_REACTION = 0
+
+    REACTION_CHOICES = (
+        (LIKE, 'Like'),
+        (DISLIKE, 'Dislike'),
+        (NO_REACTION, 'No Reaction'),
+    )
+
+    reaction = models.IntegerField(
+        choices=REACTION_CHOICES,
+        default=NO_REACTION,
+)
+```
+
+(4) comments/models.py
+```
+from django.db import models
+from common.models import CommonModel
+
+class Comment(CommonModel):
+    user = models.ForeignKey('users.User', on_delete=models.CASCADE)
+    video = models.ForeignKey('videos.Video', on_delete=models.CASCADE)
+    content = models.TextField()
+    like = models.PositiveIntegerField(default=0)
+    dislike = models.PositiveIntegerField(default=0)
+```
+
+(5) subscriptions/models.py
+```
+from django.db import models
+from common.models import CommonModel
+
+
+
+
+class Subscription(CommonModel):
+    subscriber = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='subscriptions')
+    subscribed_to = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='subscribers')
+    # subscriber_set -> subscriptions (내가 구독한 사람들)
+    # subscribed_to_set -> subscribers (나를 구독한 사람들)
+```
+
+(6) Models 정의 후 등록 및 DB migration
+```
+CUSTOM_USER_APPS = [
+    'users.apps.UsersConfig',
+    'videos.apps.VideosConfig',
+    'comments.apps.CommentsConfig',
+    'subscriptions.apps.SubscriptionsConfig',
+    'reactions.apps.ReactionsConfig',
+    'rest_framework',
+    'drf_spectacular'
+]
+
+> docker-compose run --rm app sh -c 'python manage.py makemigrations'
+> docker-compose run --rm app sh -c 'python manage.py migrate'>
+```
+
+3. __DRF setting__
+
+(1) requirements.txt에 DRF 추가
+> drf-spectacular>=0.27.2,<0.28.0
+
+(2) settings에 DRF 추가
+```
+# app/settings.py 
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'users.apps.UsersConfig',
+    'rest_framework',
+    'drf_spectacular'
+]
+
+REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+```
+
+(3) path 추가
+```
+# app/urls.py
+
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+
+urlpatterns = [
+		...,
+    path('api/v1/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/v1/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/v1/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+]
+```
+
+(4) docker 실행해서 잘 연결되는지 확인
+> docker-compose up 

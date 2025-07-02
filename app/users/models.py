@@ -22,7 +22,6 @@ class UserManager(BaseUserManager):
 
         user.is_superuser = True
         user.is_staff = True
-
         user.save()
 
         return user
@@ -43,3 +42,4 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f'email : {self.email}, nickname : {self.nickname}'
+
