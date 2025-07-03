@@ -1,7 +1,7 @@
 from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
 from .models import Video
-from .serializers import VideoListSerializer
+from .serializers import VideoListSerializer, VideoDetailSerializer
 from rest_framework.response import Response
 from rest_framework import status
 
@@ -48,7 +48,7 @@ class VideoDetail(APIView):
         except Video.DoesNotExist:
             raise NotFound
 
-        serializer = VideoListSerializer(video_obj)
+        serializer = VideoDetailSerializer(video_obj)
 
         return Response(serializer.data, 200)
 
@@ -56,7 +56,7 @@ class VideoDetail(APIView):
         video_obj = Video.objects.get(pk=pk)
         user_data = request.data
 
-        serializers = VideoListSerializer(video_obj, user_data)
+        serializers = VideoDetailSerializer(video_obj, user_data)
         serializers.is_valid(raise_exception=True)
         serializers.save()
 
