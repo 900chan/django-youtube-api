@@ -570,7 +570,7 @@ class CommandsTests(SimpleTestCase):
 - docker-compose run --rm app sh -c 'python manage.py startapp common'
 ```
 ---
-# 📑  Day_4: PROJECT settings - Models
+# 📑  Day_4: PROJECT - Custom Models 정의
 
 ---
 
@@ -852,3 +852,261 @@ urlpatterns = [
 
 (4) docker 실행해서 잘 연결되는지 확인
 > docker-compose up 
+
+
+---
+# 💾  Day_5: PROJECT - YoutubeAPI 생성
+
+---
+
+1. __videos/test.py 작성__
+```
+from rest_framework.test import APITestCase
+from users.models import User
+from videos.models import Video
+from django.urls import reverse # url => name을 기반으로 url값을 불러옴
+from rest_framework import status
+from django.core.files.uploadedfile import SimpleUploadedFile
+
+class VideoAPITestCase(APITestCase):
+    # 테스트 코드 케이스 실행 되기 전 가장 먼저 실행되는 함수
+    # - 테스트 전 데이터 생성
+    # 1) 유저 생성 및 로그인 -> 2) 비디오 생성
+    def setUp(self):
+        # 유저 생성
+        self.user = User.objects.create_user(
+            email = '900chan@gmail.com',
+            password='1234'
+        )
+        # 로그인
+        self.client.login(email='900chan@gmail.com', password='1234')
+
+        self.video = Video.objects.create(
+            title = 'First Video title',
+            link = 'http://www.test.com',
+            user = self.user
+        )
+
+    # api/v1/videos [GET]
+    def test_video_list_get(self):
+        url = reverse('video-list')
+        res = self.client.get(url)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(res.data) > 0)
+
+        for video in res.data:
+            self.assertIn('title', video)
+
+    def test_video_list_post(self):
+        url = reverse('video-list')
+
+        data = {
+            'title' : 'My test video title',
+            'link' : 'http://www.test.com',
+            'category' : 'Development',
+            'thumbnail' : 'http://www.test.com',
+            'video_file' : SimpleUploadedFile('test.mp4', b'file_content', 'video/mp4'),
+            'user' : self.user.pk
+        }
+
+        res = self.client.post(url, data) # videoL
+        self.assertEqual(res.status_code, 201) # 201_CREATED
+        self.assertEqual(res.data['title'], 'My test video title')
+
+    # 특정 비디오 조회
+    def test_video_dtail_get(self):
+        url = reverse('video-detail', kwargs={'pk':self.video.pk})
+        res = self.client.get(url)
+
+        self.assertEqual(res.status_code, 200)
+
+
+    # 특정 비디오 업데이트
+    def test_video_detail_put(self):
+        url = reverse('video-detail', kwargs={'pk':self.video.pk})
+
+        data = {
+            'title': 'Updated video title',
+            'link': 'http://www.test.com',
+            'category': 'Development',
+            'thumbnail': 'http://www.test.com',
+            'video_file': SimpleUploadedFile('test.mp4', b'file_content', 'video/mp4'),
+            'user': self.user.pk
+        }
+        res = self.client.put(url, data)
+
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['title'], 'Updated video title')
+
+    # 특정 비디오 삭제
+    def test_video_detail_delete(self):
+        url = reverse('video-detail', kwargs={'pk':self.video.pk})
+
+        res = self.client.delete(url)
+
+        self.assertEqual(res.status_code, 204)
+
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, 404)
+```
+
+2. __videos/view.py 작성__
+```
+from rest_framework.exceptions import NotFound
+from rest_framework.views import APIView
+from .models import Video
+from .serializers import VideoListSerializer, VideoDetailSerializer
+from rest_framework.response import Response
+from rest_framework import status
+
+# 1. VideoList
+# api/v1/videos
+# [GET] : 전체 비디오 목록 조회
+# [POST] : 새로운 비디오 생성
+# [PUT], [DELETE] : X
+
+class VideoList(APIView):
+    def get(self, request):
+        videos = Video.objects.all()
+
+        # objects -> Json 직렬화 필요
+        serializers = VideoListSerializer(videos, many=True)
+
+        return Response(serializers.data, status=status.HTTP_200_OK)
+
+    def post(self,request):
+        user_data = request.data # Json -> object 역직렬화 필요
+
+        serializers = VideoListSerializer(data=user_data)
+
+        if serializers.is_valid():
+            serializers.save(user=request.user)
+            return Response(serializers.data, status=status.HTTP_201_CREATED)
+
+        return Response(serializers.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# 2. VideoDetail
+# api/v1/videos/{video_id}
+# [GET] : 특정 비디오 조회
+# [POST] : X
+# [PUT] : 특정 비디오 업데이트
+# [DELETE] : 특정 비디오 삭제
+
+class VideoDetail(APIView):
+    def get(self, request, pk):
+        try:
+            video_obj = Video.objects.get(pk=pk)
+        except Video.DoesNotExist:
+            raise NotFound
+
+        serializer = VideoDetailSerializer(video_obj)
+
+        return Response(serializer.data, 200)
+
+    def put(self, request, pk):
+        video_obj = Video.objects.get(pk=pk)
+        user_data = request.data
+
+        serializers = VideoDetailSerializer(video_obj, user_data)
+        serializers.is_valid(raise_exception=True)
+        serializers.save()
+
+        return Response(serializers.data)
+
+    def delete(self, request, pk):
+        video_obj = Video.objects.get(pk=pk)
+        video_obj.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+```
+3. __video/urls.py 작성__
+```
+from django.urls import path
+from .views import (
+    VideoList,
+    VideoDetail    
+)
+
+# api/v1/video
+urlpatterns = [
+    path('', VideoList.as_view(), name='video-list'), # api/v1/video/{pk}
+    path('<int:pk>/', VideoDetail.as_view(), name='video-detail')
+]
+```
+
+4. __video/admin.py 작성__
+```
+from django.contrib import admin
+from .models import Video
+
+@admin.register(Video)
+class VideoAdmin(admin.ModelAdmin):
+    pass
+```
+
+5. __video/serializers.py 작성__
+```
+from rest_framework.serializers import ModelSerializer
+from rest_framework import serializers
+from .models import Video
+from users.serializers import UserInfoSerializer
+from comments.serializers import CommentSerializer
+from reactions.models import Reaction
+
+class VideoListSerializer(ModelSerializer):
+
+    user = UserInfoSerializer(read_only=True)
+
+    class Meta:
+        model = Video
+        fields = '__all__'
+```
+6. __Video Rest API에 댓글 기능 추가__
+
+```
+# video/serializers.py
+ 
+# 댓글 정보 추가
+class VideoDetailSerializer(ModelSerializer):
+    user = UserInfoSerializer(read_only=True)
+
+    # Video:Comment (FK-자녀)
+    # - Reverse Accessor = 부모가 자녀를 찾을 때 활용
+    comment_set = CommentSerializer(many=True, read_only=True)
+```
+7. __Video Rest API에 좋아요/싫어요 기능 추가__
+```
+# reaction/models.py
+
+from django.db import models
+from django.db.models import Q, Count
+
+@staticmethod
+    def get_video_reactions(video):
+        reactions = Reaction.objects.filter(video=video).aggregate(
+            likes_count=Count('pk', filter=Q(reaction=Reaction.LIKE)),
+            dislikes_count=Count('pk', filter=Q(reaction=Reaction.DISLIKE)),
+        )
+        return reactions
+
+- - - - - -
+
+# video/serializers.py
+
+rom rest_framework import serializers
+from .models import Video, Reaction
+class VideoDetailSerializer(ModelSerializer):
+... # 기존의 내용 밑에 추가
+
+    reactions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Video
+        fields = '__all__'
+
+    def get_reactions(self, video):
+        return Reaction.get_video_reactions(video)
+```        
+        
+

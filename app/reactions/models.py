@@ -1,6 +1,6 @@
 from django.db import models
-from common.models import CommonModel
 from django.db.models import Q, Count
+from common.models import CommonModel
 
 class Reaction(CommonModel):
     user = models.ForeignKey('users.User', on_delete=models.CASCADE)
